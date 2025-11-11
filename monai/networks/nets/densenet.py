@@ -331,8 +331,7 @@ class DenseNet_ema(nn.Module):
             )
             self.features.add_module(f"denseblock{i + 1}", block)
             in_channels += num_layers * growth_rate
-            # 添加EMA操作
-            self.ema = EMA(in_channels, factor=ema_factor)  # 初始化EMA对象
+            self.ema = EMA(in_channels, factor=ema_factor)
             self.features.add_module(f"ema_block{i + 1}", self.ema)
             if i == len(block_config) - 1:
                 self.features.add_module(
