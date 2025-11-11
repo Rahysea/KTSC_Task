@@ -47,31 +47,25 @@ class EMA(nn.Module):
         self.groups = factor
         assert channels // self.groups > 0
         self.softmax = nn.Softmax(-1)
-        # 3D池化操作
-        self.agp = nn.AdaptiveAvgPool3d((1, 1, 1))  # 全局平均池化
-        self.pool_d = nn.AdaptiveAvgPool3d((None, 1, 1))  # 深度方向池化
-        self.pool_h = nn.AdaptiveAvgPool3d((1, None, 1))  # 高度方向池化
-        self.pool_w = nn.AdaptiveAvgPool3d((1, 1, None))  # 宽度方向池化
+        self.agp = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.pool_d = nn.AdaptiveAvgPool3d((None, 1, 1))
+        self.pool_h = nn.AdaptiveAvgPool3d((1, None, 1))
+        self.pool_w = nn.AdaptiveAvgPool3d((1, 1, None))
         self.gn = nn.GroupNorm(channels // self.groups, channels // self.groups)
-        # 3D卷积操作
         self.conv1x1 = nn.Conv3d(channels // self.groups, channels // self.groups, kernel_size=1, stride=1, padding=0)
         self.conv3x3 = nn.Conv3d(channels // self.groups, channels // self.groups, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
         b, c, d, h, w = x.size()
-        # 将通道分组处理
         group_x = x.reshape(b * self.groups, -1, d, h, w)  # b*g, c//g, d, h, w
         x_d = self.pool_d(group_x)
         x_h = self.pool_h(group_x).permute(0, 1, 3, 2, 4)
         x_w = self.pool_w(group_x).permute(0, 1, 4, 3, 2)
-        # cat和1x1卷积
         dhw = self.conv1x1(torch.cat([x_d, x_h, x_w], dim=2))
         x_d, x_h, x_w = torch.split(dhw, [d, h, w], dim=2)
-        # 使用sigmoid激活函数
         x1 = self.gn(group_x * x_d.sigmoid() * x_h.sigmoid().permute(0, 1, 3, 2, 4) * x_w.sigmoid().permute(0, 1, 4, 3, 2))
         x2 = self.conv3x3(group_x)
 
-        # 进行全局平均池化和softmax
         x11 = self.softmax(self.agp(x1).reshape(b * self.groups, -1, 1, 1, 1).permute(0, 4, 2, 3, 1))
         x11 = x11.view(x11.shape[0], 1, x11.shape[-1])
         x12 = x2.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g d*h*w
@@ -79,7 +73,6 @@ class EMA(nn.Module):
         x21 = x21.view(x21.shape[0], 1, x21.shape[-1])
         x22 = x1.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g, d*h*w
 
-        # 计算权重
         weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, d, h, w)
         return (group_x * weights.sigmoid()).reshape(b, c, d, h, w)
 
@@ -291,27 +284,6 @@ class DenseNet(nn.Module):
         return x
 
 class DenseNet_ema(nn.Module):
-    """
-    Densenet based on: `Densely Connected Convolutional Networks <https://arxiv.org/pdf/1608.06993.pdf>`_.
-    Adapted from PyTorch Hub 2D version: https://pytorch.org/vision/stable/models.html#id16.
-    This network is non-deterministic When `spatial_dims` is 3 and CUDA is enabled. Please check the link below
-    for more details:
-    https://pytorch.org/docs/stable/generated/torch.use_deterministic_algorithms.html#torch.use_deterministic_algorithms
-
-    Args:
-        spatial_dims: number of spatial dimensions of the input image.
-        in_channels: number of the input channel.
-        out_channels: number of the output classes.
-        init_features: number of filters in the first convolution layer.
-        growth_rate: how many filters to add each layer (k in paper).
-        block_config: how many layers in each pooling block.
-        bn_size: multiplicative factor for number of bottle neck layers.
-            (i.e. bn_size * k features in the bottleneck layer)
-        act: activation type and arguments. Defaults to relu.
-        norm: feature normalization type and arguments. Defaults to batch norm.
-        dropout_prob: dropout rate after each dense layer.
-    """
-
     def __init__(
         self,
         spatial_dims: int,
@@ -324,10 +296,10 @@ class DenseNet_ema(nn.Module):
         act: str | tuple = ("relu", {"inplace": True}),
         norm: str | tuple = "batch",
         dropout_prob: float = 0.0,
-        ema_factor: int = 8,  # EMA的分组因子
+        ema_factor: int = 8,
     ) -> None:
         super().__init__()
-        self.ema_factor = ema_factor  # EMA因子
+        self.ema_factor = ema_factor
         conv_type: type[nn.Conv1d | nn.Conv2d | nn.Conv3d] = Conv[Conv.CONV, spatial_dims]
         pool_type: type[nn.MaxPool1d | nn.MaxPool2d | nn.MaxPool3d] = Pool[Pool.MAX, spatial_dims]
         avg_pool_type: type[nn.AdaptiveAvgPool1d | nn.AdaptiveAvgPool2d | nn.AdaptiveAvgPool3d] = Pool[
@@ -398,8 +370,7 @@ class DenseNet_ema(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
         x = self.class_layers(x)
-        # # 在每次前向传播后更新EMA
-        # x = self.ema(x)  # 通过EMA处理输入
+        # x = self.ema(x)
         return x
 
 def _load_state_dict(model: nn.Module, arch: str, progress: bool):
